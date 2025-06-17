@@ -1,4 +1,4 @@
-# Trexquant Dev Ops Engineer Project
+# Trexquant Data Engineer Project
 
 Author: Kevin Kenneally  
 Date: June 15, 2025
