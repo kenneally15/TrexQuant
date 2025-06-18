@@ -1,63 +1,82 @@
-# Trexquant Data Engineer Project
+# EDGAR 10-Q EPS Parser
 
-Author: Kevin Kenneally  
-Date: June 15, 2025
-
-## Project Overview
-This project parses EDGAR 10-Q filings to extract Earnings Per Share (EPS) data. The parser processes HTML files from SEC EDGAR filings and outputs the results in a CSV format.
+This script, `parser.py`, is designed to parse quarterly EPS (Earnings Per Share) data from 10-Q filings from the U.S. Securities and Exchange Commission (SEC). It processes a directory of HTML files, extracts the most relevant EPS value from each, and compiles the results into a single CSV file.
 
 ## Features
-- Extracts EPS values from HTML filings
-- Handles various EPS formats and labels:
-  - Basic EPS
-  - GAAP EPS
-  - Unadjusted EPS
-  - General EPS
-  - Loss per share
-  - Diluted EPS
-  - Adjusted/non-GAAP EPS
-- Processes negative values (represented in parentheses)
-- Ignores year values and other non-EPS numbers
-- Outputs results in CSV format with "NONE" for missing values
 
-## Requirements
-- Python 3.x
-- Required packages (see requirements.txt):
-  - beautifulsoup4==4.12.2
-  - pandas==2.1.0
+- Extracts EPS data from financial tables within HTML filings.
+- Prioritizes `basic` and `GAAP` (unadjusted) EPS values.
+- Implements a multi-stage search strategy:
+    1.  **Targeted Table Search:** First, it identifies financial tables (e.g., "Consolidated Statements of Operations") and searches for EPS values within them, including handling data in subsections.
+    2.  **Full-Text Fallback:** If no value is found in the tables, it performs a fallback search through the entire document text using a comprehensive list of EPS-related terms.
+- Handles negative values, which are often denoted with parentheses.
+- Outputs a clean, three-column CSV file with the `filename`, the extracted `EPS`, and the specific `EPS_Term` that was matched.
+
+## Setup and Installation
+
+### Prerequisites
+- Python 3.6+
+
+### Environment Setup
+
+1.  **Create a Virtual Environment:**
+    It is highly recommended to run the script in a virtual environment to manage dependencies and avoid conflicts with system-wide packages.
+
+    ```bash
+    python3 -m venv venv
+    ```
+
+2.  **Activate the Virtual Environment:**
+
+    -   On **macOS and Linux**:
+        ```bash
+        source venv/bin/activate
+        ```
+    -   On **Windows**:
+        ```bash
+        .\venv\Scripts\activate
+        ```
+
+3.  **Install Dependencies:**
+    Once the virtual environment is active, install the required packages from the `requirements.txt` file.
+
+    ```bash
+    pip install -r requirements.txt
+    ```
 
 ## Usage
+
+Run the script from the command line, providing the input directory containing the HTML filings and the desired path for the output CSV file.
+
 ```bash
-python parser.py <input_directory> <output_file>
+python parser.py <input_dir> <output_file>
 ```
 
 ### Arguments
-- `input_directory`: Path to the directory containing HTML filings
-- `output_file`: Path where the CSV output will be saved
+
+-   `<input_dir>`: The path to the directory containing the `.html` 10-Q filing files.
+-   `<output_file>`: The path where the output CSV file will be saved (e.g., `output.csv`).
 
 ### Example
+
+If your filings are in a directory named `Training_Filings`, you can run the script with the following command:
+
 ```bash
-python parser.py Training_Filings output.csv
+python parser.py Training_Filings results.csv
 ```
 
-## Output Format
-The script generates a CSV file with two columns:
-- `filename`: Name of the processed HTML file
-- `EPS`: Extracted EPS value (or "NONE" if not found)
+This will process all HTML files in the `Training_Filings` directory and create a file named `results.csv` with the extracted data.
 
-## Implementation Details
-The parser uses several strategies to extract EPS values:
-1. Searches for EPS values in HTML tables first
-2. Falls back to text content if no table values are found
-3. Uses regex patterns to identify EPS-related text
-4. Prioritizes basic EPS over diluted EPS
-5. Handles various number formats (including negative values in parentheses)
-6. Filters out year values and other non-EPS numbers
+## Known Limitations and Future Improvements
 
-## Error Handling
-- Files that cannot be processed are logged with error messages
-- Missing or invalid EPS values are marked as "NONE" in the output
-- The script continues processing remaining files even if some files fail
+While the parser is robust, it does not handle every possible edge case found in the wild. Given more time, the parser could be expanded to handle more complex scenarios.
+
+For instance, in file `0000895419-20-000042.html`, the correct EPS value is missed due to two primary challenges:
+
+1.  **Complex Table Structures:** The table breaks down the primary "Basic and diluted loss per share" into further nested subsections like "Continuing operations attributable to controlling interest" and "Net loss attributable to controlling interest." The current logic does not traverse this deeply nested structure to link the value back to the parent EPS term.
+2.  **Context-Dependent Fallback Search:** The fallback text search also fails. The relevant sentence is, *"GAAP net loss from continuing operations attributable to controlling interest for the third quarter was $61.6 million, or $0.57 per diluted share,"*. The parser's current context window is not wide enough to correctly associate the `$0.57` value with a primary EPS term across such a lengthy and complex phrase.
+
+Future enhancements could focus on building a more sophisticated model for parsing highly nested tables and for understanding the wider context in free-text sentences.
 
 
 

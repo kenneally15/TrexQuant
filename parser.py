@@ -67,7 +67,7 @@ def find_eps_in_file(file_path):
             # Loss-Based Variations
             'basic loss per share', 'basic net loss per share',
             'net loss per common share - basic', 'loss per share', 'net loss per share',
-            'net loss per common share',
+            'net loss per common share', 'basic and diluted loss per share',
             # Combined Earnings/Loss Variations
             'earnings (loss) per basic share', 'earnings (loss) per share',
             'earnings (loss) per common share', 'net income (loss) per share',
@@ -96,36 +96,62 @@ def find_eps_in_file(file_path):
                 if table:
                     target_tables.append(table)
         
-        # If no specific tables were found, fall back to all tables in the document
-        if not target_tables:
-            target_tables = soup.find_all('table')
-
-        # 3. Search for EPS values within the identified tables
-        for table in target_tables:
-            for row in table.find_all('tr'):
-                row_text_lower = row.get_text().lower()
-                
-                # Find which term is in the row
-                matched_term = None
-                for term in eps_terms:
-                    if term in row_text_lower:
-                        matched_term = term
-                        break
-                
-                if matched_term:
-                    cells = row.find_all(['td', 'th'])
-                    for cell in cells:
-                        value = extract_eps_value(cell.get_text().strip())
-                        if value is not None:
-                            is_basic = 'basic' in row_text_lower
-                            is_gaap = 'gaap' in row_text_lower or 'unadjusted' in row_text_lower
-                            is_loss = 'loss' in row_text_lower or 'net loss' in row_text_lower
-                            if is_loss and not value.startswith('-'):
-                                value = '-' + value
-                            found_values.append({'value': value, 'term': matched_term, 'is_basic': is_basic, 'is_gaap': is_gaap})
+        # 3. Search for EPS values ONLY within the identified tables
+        if target_tables:
+            for table in target_tables:
+                rows = table.find_all('tr')
+                for i, row in enumerate(rows):
+                    row_text_lower = row.get_text().lower()
+                    
+                    # Find which term is in the row (our potential header row)
+                    matched_term = None
+                    for term in eps_terms:
+                        if term in row_text_lower:
+                            matched_term = term
                             break
+                    
+                    if matched_term:
+                        # First, try to find the value in the same row as the term.
+                        cells = row.find_all(['td', 'th'])
+                        value_found_in_header_row = False
+                        for cell in cells:
+                            value = extract_eps_value(cell.get_text().strip())
+                            if value is not None:
+                                is_basic = 'basic' in row_text_lower
+                                is_gaap = 'gaap' in row_text_lower or 'unadjusted' in row_text_lower
+                                is_loss = 'loss' in row_text_lower or 'net loss' in row_text_lower
+                                if is_loss and not value.startswith('-'):
+                                    value = '-' + value
+                                found_values.append({'value': value, 'term': matched_term, 'is_basic': is_basic, 'is_gaap': is_gaap})
+                                value_found_in_header_row = True
+                                break # Found value in this row, no need to check other cells
+                        
+                        # If no value was in the header row, search subsections in subsequent rows.
+                        if not value_found_in_header_row:
+                            # Look ahead up to 4 rows for the first numerical value.
+                            for next_row in rows[i+1 : i+5]:
+                                subsection_value_found = False
+                                next_row_text_lower = next_row.get_text().lower()
+                                next_cells = next_row.find_all(['td', 'th'])
+                                for cell in next_cells:
+                                    value = extract_eps_value(cell.get_text().strip())
+                                    if value is not None:
+                                        # This is the first numerical value in a subsequent row.
+                                        is_basic = 'basic' in next_row_text_lower
+                                        is_gaap = 'gaap' in next_row_text_lower or 'unadjusted' in next_row_text_lower
+                                        is_loss = 'loss' in next_row_text_lower or 'net loss' in next_row_text_lower
+                                        if is_loss and not value.startswith('-'):
+                                            value = '-' + value
+                                        
+                                        # Use the original term from the header row.
+                                        found_values.append({'value': value, 'term': matched_term, 'is_basic': is_basic, 'is_gaap': is_gaap})
+                                        subsection_value_found = True
+                                        break # Stop after finding the first value in the row.
+                                
+                                if subsection_value_found:
+                                    break # Stop looking ahead after finding a value in a subsection row.
         
-        # 4. Prioritize and return the best value and term found
+        # 4. Prioritize and return the best value and term found in tables
         if found_values:
             basic_values = [v for v in found_values if v['is_basic']]
             if basic_values: found_values = basic_values
@@ -134,8 +160,29 @@ def find_eps_in_file(file_path):
             best_result = found_values[0]
             return best_result['value'], best_result['term']
 
-        # --- Fallback Search 1: More Specific "per share" Variations ---
+        # --- Fallback Search 1: If nothing in tables, search entire text with specific terms ---
         all_text = soup.get_text()
+        for term in eps_terms:
+            try:
+                # Use finditer to find all occurrences of the term, as whole words
+                matches = re.finditer(r'\b' + re.escape(term) + r'\b', all_text, re.IGNORECASE)
+                for match in matches:
+                    # Look in a window of characters after the term for a number
+                    context = all_text[match.end():match.end() + 100]
+                    
+                    # Regex to find numbers, including parenthesized negatives
+                    number_match = re.search(r'\(?\s*\$?\s*(\d{1,3}(,\d{3})*|\d+)(\.\d{1,2})?\s*\)?', context)
+                    
+                    if number_match:
+                        value = extract_eps_value(number_match.group(0))
+                        if value is not None:
+                            # As soon as we find a plausible value in the fallback, return it.
+                            return value, term
+            except re.error:
+                # Ignore regex errors from complex terms and continue
+                continue
+
+        # --- Fallback Search 2: Broader "per share" Variations ---
         fallback_terms = [
             'per share', 'per basic share', 'per common share', 'per diluted share', 'per common stock'
         ]
@@ -150,12 +197,9 @@ def find_eps_in_file(file_path):
                         return value, term
 
         # --- No Value Found ---
-        # print(f"Warning: Could not find any valid EPS value for {file_path}. Resulting in NONE.")
         return None, None
         
     except Exception as e:
-        # print(f"Error processing {file_path}: {str(e)}")
-        # If file processing fails, return None
         return None, None
 
 def process_directory(input_dir, output_file):
